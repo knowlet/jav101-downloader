@@ -1,0 +1,24 @@
+version: '3'
+services:
+  web:
+    image: node:8-alpine
+    user: "node"
+    working_dir: /home/node/app
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./:/home/node/app
+      - /mnt/hgfs/Shared/Downloads/jav101:/home/node/app/dl
+    command: "npm start"
+    ports:
+     - "443:3000"
+    links:
+      - redis
+  redis:
+    image: "redis:alpine"
+    volumes:
+      - rdata:/data
+    command: "redis-server --requirepass jav101"
+
+volumes:
+  rdata:
