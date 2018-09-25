@@ -3,7 +3,7 @@ const r2 = require('node-fetch')
 const Router = require('koa-router')
 const send = require('koa-send')
 const uuidv4 = require('uuid/v4')
-
+const { URLSearchParams } = require('url')
 const { client: c, r } = require('./redis')
 
 const router = Router()
@@ -20,6 +20,7 @@ router.get('/download/:uuid', async (ctx, next) => {
   ctx.assert(uuidV4Regex.test(ctx.params.uuid), 404)
   const path = await r.getAsync(`${ctx.params.uuid}`)
   ctx.assert(path, 404)
+  ctx.set('Content-Disposition', `inline; filename="${require('path').basename(path)}"`)
   return send(ctx, path)
 })
 
@@ -30,8 +31,20 @@ const showInfo = ctx => {
 
 const showLink = async (avid, ctx) => {
   const url = await r.getAsync(`${avid}:url`)
-  console.log(url)
-  ctx.assert(url !== 'failed', 400, '破解失敗，敬請回報：<a href="https://goo.gl/forms/lkfngImMkaX8Curx1">點此回報</a>')
+  if (url === 'failed') {
+    c.set(`${avid}:status`, 'retry')
+    ctx.throw(400, '破解失敗，目前所有機器滿載，請稍後再試。\n若持續失敗敬請回報：https://goo.gl/forms/lkfngImMkaX8Curx1')
+  }
+  if (!ctx.query.t) return send(ctx, './auth.html')
+  const params = new URLSearchParams()
+  params.append('secret', 'S4nSLaNXeS7ApFLD8wuy9gFe8ECk0l5J')
+  params.append('token', ctx.query.t)
+  params.append('hashes', 512)
+  const res = await r2('https://api.coinhive.com/token/verify', {
+    method: 'POST',
+    body: params
+  }).then(res => res.json())
+  ctx.assert(res.success, 400, res.error)
   if (url === null) {
     const path = await r.getAsync(`${avid}:path`)
     return ctx.redirect(createLink(avid, path))
@@ -41,15 +54,13 @@ const showLink = async (avid, ctx) => {
 
 const createLink = (avid, path) => {
   const uuid = uuidv4()
-  console.log(path)
   c.mset(`${avid}:status`, 'done', `${avid}:path`, path, `${avid}:url`, uuid, uuid, path)
   c.expire(`${avid}:url`, 60 * 60) // 30 * 60)
   c.expire(uuid, 90 * 60) // 30 * 60)
-  console.log(`/download/${uuid}`)
   return `https://adf.ly/3758308/banner/https://javl0l.com/download/${uuid}`
 }
 // https://v.jav101.com/play/avid5b9b2edaef9bd
-router.get('/play/:avid(avid\\w{13})', async (ctx, next) => {
+router.get('/play/:avid(avid\\w{12,13})', async (ctx, next) => {
   const avid = ctx.params.avid
   const status = await r.getAsync(`${avid}:status`)
   if (status === 'downloading') {
@@ -64,13 +75,12 @@ router.get('/play/:avid(avid\\w{13})', async (ctx, next) => {
         .then(res => {
           const fileSize = fs.statSync(path).size
           const contenLen = parseInt(res.headers.get('Content-Length'))
-          if (fileSize === contenLen) {
-            console.log('no-need')
+          if (fileSize < contenLen) {
+            console.log(`re-download file: ${path}`)
+          // return fs.unlink(path)
+          } else {
             ctx.redirect(createLink(avid, path))
             return true
-          } else {
-            console.log(`re-download file: ${path}`)
-            // return fs.unlink(path)
           }
         })
     }
@@ -78,11 +88,13 @@ router.get('/play/:avid(avid\\w{13})', async (ctx, next) => {
     r2(`http://download2.jav101.com/${avid}.mp4`)
       .then(res => {
         if (!res.ok) throw new Error(res.statusText)
-        console.log('downloading')
+        console.log('Start download', avid)
         c.set(`${avid}:status`, 'downloading')
+        // if download > 90min then failed
+        c.expire(`${avid}:status`, 90 * 60)
         const dest = fs.createWriteStream(path)
         dest.once('finish', () => {
-          console.log('done')
+          console.log(avid, 'done.')
           createLink(avid, path)
         })
         res.body.pipe(dest)
@@ -93,17 +105,15 @@ router.get('/play/:avid(avid\\w{13})', async (ctx, next) => {
 })
 
 // https://jav101.com/play/video/avid5b8f3faa46256
-router.get('/play/video/:avid(avid\\w{13})', async (ctx, next) => {
+router.get('/play/video/:avid(avid\\w{12,13})', async (ctx, next) => {
   const avid = ctx.params.avid
-  console.log(avid)
   let no = await r.getAsync(`${avid}:no`)
-  console.log(no)
   if (!no) {
-    console.log('fetching...')
+    console.log(avid, 'fetching...')
     try {
       const html = await r2(`https://jav101.com/play/video/${avid}`, { redirect: 'error' })
         .then(res => res.text())
-      no = html.match(/https:\/\/sat\.jav101\.com\/([\w-]{4,10})\/intro\/.{4,10}\.m3u8/)[1]
+      no = html.match(/https:\/\/sat\.jav101\.com\/([\w-]{4,20})\/intro\/\1\.m3u8/)[1]
     } catch (err) {
       no = 'INVALID'
     }
@@ -121,17 +131,16 @@ router.get('/play/video/:avid(avid\\w{13})', async (ctx, next) => {
     const path = `${PATH}${no}.mp4`
     let noReDl = false
     if (fs.existsSync(path)) {
-      console.log(path)
       noReDl = await r2(`http://download.jav101.com/${no}.mp4`, { method: 'HEAD' })
         .then(res => {
           const fileSize = fs.statSync(path).size
           const contenLen = parseInt(res.headers.get('Content-Length'))
-          if (fileSize === contenLen) {
+          if (fileSize < contenLen) {
+            console.log(`re-download file: ${path}`)
+          // return fs.unlink(path)
+          } else {
             ctx.redirect(createLink(avid, path))
             return true
-          } else {
-            console.log(`re-download file: ${path}`)
-            // return fs.unlink(path)
           }
         })
     }
@@ -139,11 +148,12 @@ router.get('/play/video/:avid(avid\\w{13})', async (ctx, next) => {
     r2(`http://download.jav101.com/${no}.mp4`)
       .then(res => {
         if (!res.ok) throw new Error(res.statusText)
-        console.log('downloading')
+        console.log('Start download', no)
         c.set(`${avid}:status`, 'downloading')
+        c.expire(`${avid}:status`, 90 * 60)
         const dest = fs.createWriteStream(path)
         dest.once('finish', () => {
-          console.log('done')
+          console.log(no, 'done.')
           createLink(avid, path)
         })
         res.body.pipe(dest)

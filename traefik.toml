@@ -1,0 +1,15 @@
+# traefik.toml
+defaultEntryPoints = ["https"]
+
+[entryPoints]
+  [entryPoints.https]
+  address = ":443"
+  compress = true
+  [entryPoints.https.tls]
+    [[entryPoints.https.tls.certificates]]
+    certFile = "/etc/ssl/cert.pem"
+    keyFile = "/etc/ssl/priv.pem"
+
+[file]
+  directory = "/etc/traefik/"
+  watch = true

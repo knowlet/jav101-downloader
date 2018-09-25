@@ -12,7 +12,7 @@ client.on('error', function (err) {
 })
 
 // init
-client.flushall()
+// client.flushall()
 
 module.exports = {
   client,

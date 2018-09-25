@@ -1,7 +1,24 @@
 version: '3'
 services:
+  reverse-proxy:
+    image: traefik
+    labels:
+      - "traefik.enable=false"
+    command: --docker
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - $PWD/traefik.toml:/etc/traefik/traefik.toml
+      - $PWD/cert.pem:/etc/ssl/cert.pem
+      - $PWD/priv.pem:/etc/ssl/priv.pem
   web:
     image: node:8-alpine
+    labels:
+      - "traefik.frontend.rule=Host:javl0l.com,v.javl0l.com"
+      # - "traefik.basic.protocol=https"
+      - "traefik.basic.port=3000"
     user: "node"
     working_dir: /home/node/app
     environment:
@@ -10,12 +27,22 @@ services:
       - ./:/home/node/app
       - /mnt/hgfs/Shared/Downloads/jav101:/home/node/app/dl
     command: "npm start"
-    ports:
-     - "443:3000"
+    links:
+      - redis
+  commander:
+    image: rediscommander/redis-commander:latest
+    labels:
+      - "traefik.frontend.rule=Host:r.javl0l.com"
+      - "traefik.basic.port=8081"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=jav101
     links:
       - redis
   redis:
     image: "redis:alpine"
+    labels:
+      - "traefik.enable=false"
     volumes:
       - rdata:/data
     command: "redis-server --requirepass jav101"
