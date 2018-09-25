@@ -31,7 +31,8 @@ const showInfo = ctx => {
 
 const showLink = async (avid, ctx) => {
   const url = await r.getAsync(`${avid}:url`)
-  if (url === 'failed') {
+  if (url.startsWith('failed')) {
+    ctx.assert(!url.endsWith('Not Found'), 404)
     c.set(`${avid}:status`, 'retry')
     ctx.throw(400, '破解失敗，目前所有機器滿載，請稍後再試。\n若持續失敗敬請回報：https://goo.gl/forms/lkfngImMkaX8Curx1')
   }
@@ -99,7 +100,7 @@ router.get('/play/:avid(avid\\w{12,13})', async (ctx, next) => {
         })
         res.body.pipe(dest)
       })
-      .catch(err => { c.mset(`${avid}:status`, 'done', `${avid}:url`, 'failed'); console.log(err) })
+      .catch(err => { c.mset(`${avid}:status`, 'done', `${avid}:url`, `failed: ${err.message}`); console.log(err) })
     showInfo(ctx)
   }
 })
@@ -158,7 +159,7 @@ router.get('/play/video/:avid(avid\\w{12,13})', async (ctx, next) => {
         })
         res.body.pipe(dest)
       })
-      .catch(err => { c.mset(`${avid}:status`, 'done', `${avid}:url`, 'failed'); console.log(err) })
+      .catch(err => { c.mset(`${avid}:status`, 'done', `${avid}:url`, `failed: ${err.message}`); console.log(err) })
     showInfo(ctx)
   }
 })
